@@ -9,7 +9,6 @@ import requests
 from requests.auth import HTTPDigestAuth
 from rich.console import Console
 from rich.table import Table
-import openai
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -34,13 +33,6 @@ def load_calibre_credentials():
     if not (base_url and user and password):
         raise ValueError("Please set CALIBRE_URL, CALIBRE_USER, and CALIBRE_PASS in .env")
     return base_url.rstrip('/'), user, password, library
-
-def load_openai_credentials():
-    load_dotenv()
-    key = os.getenv("OPENAI_API_KEY")
-    if not key:
-        raise ValueError("Please set OPENAI_API_KEY in .env for OpenAI method")
-    openai.api_key = key
 
 def init_db():
     conn = sqlite3.connect(CACHE_DB)
@@ -113,7 +105,6 @@ def recommend_tfidf(books, past_ids, logger):
     docs = [f"{b['title']} {b['author']} {b['topic']}" for b in books]
     vectorizer = TfidfVectorizer(stop_words='english')
     X = vectorizer.fit_transform(docs)
-
     if past_ids:
         indices = [i for i, b in enumerate(books) if b['id'] in past_ids]
         profile = X[indices].mean(axis=0)
@@ -126,9 +117,22 @@ def recommend_tfidf(books, past_ids, logger):
     else:
         norms = np.asarray(X.power(2).sum(axis=1)).flatten()
         idx = int(norms.argmax())
-
     rec = books[idx]
     logger.info(f"TF-IDF recommended book ID {rec['id']}")
+    return rec['id']
+
+def recommend_query(books, query, past_ids, logger):
+    docs = [f"{b['title']} {b['author']} {b['topic']}" for b in books]
+    vectorizer = TfidfVectorizer(stop_words='english')
+    X = vectorizer.fit_transform(docs)
+    q_vec = vectorizer.transform([query])
+    sims = cosine_similarity(X, q_vec).flatten()
+    for i, b in enumerate(books):
+        if b['id'] in past_ids:
+            sims[i] = -1
+    idx = int(sims.argmax())
+    rec = books[idx]
+    logger.info(f"Query-TFIDF '{query}' recommended book ID {rec['id']}")
     return rec['id']
 
 def display_books_table(books):
@@ -145,12 +149,10 @@ def display_books_table(books):
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("-m", "--method", choices=["openai","tfidf"], default="tfidf",
-                        help="Recommendation method (default: tfidf)")
-    parser.add_argument("-l", "--list", dest="list_only", action="store_true",
-                        help="Only list books")
-    parser.add_argument("-r", "--recommend", dest="recommend_only", action="store_true",
-                        help="Only recommend a book")
+    parser.add_argument("-m", "--method", choices=["tfidf"], default="tfidf", help="Recommendation method")
+    parser.add_argument("-l", "--list", action="store_true", dest="list_only", help="Only list books")
+    parser.add_argument("-r", "--recommend", nargs="?", const="", dest="recommend_query",
+                        help="Recommend a book; optionally provide a query to search similar books")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
@@ -158,9 +160,6 @@ def main():
     session = requests.Session()
     session.auth = HTTPDigestAuth(user, password)
     session.headers.update({'Accept': 'application/json'})
-
-    if args.method == "openai":
-        load_openai_credentials()
 
     conn = init_db()
     ids = fetch_book_ids(session, base_url, library, logger)
@@ -171,6 +170,7 @@ def main():
         save_books(conn, books, logger)
 
     console = Console()
+
     if args.list_only:
         display_books_table(books)
         conn.close()
@@ -181,24 +181,27 @@ def main():
     cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
 
-    if args.method == "tfidf":
-        rec_id = recommend_tfidf(books, past_ids, logger)
+    # choose recommendation mode
+    if args.recommend_query is not None and args.recommend_query != "":
+        rec_id = recommend_query(books, args.recommend_query, past_ids, logger)
     else:
-        # placeholder for openai
         rec_id = recommend_tfidf(books, past_ids, logger)
 
-    # store recommendation
+    # record recommendation
     today = date.today().isoformat()
     cur.execute(
-        'INSERT OR REPLACE INTO recommendations (rec_date, book_id) VALUES (?, ?)',
+        'INSERT INTO recommendations (rec_date, book_id) VALUES (?, ?)',
         (today, rec_id)
     )
     conn.commit()
 
     rec = next(b for b in books if b['id'] == rec_id)
-    if not args.recommend_only:
-        console.print(f"Library contains {len(books)} books.")
-    console.print(f"[bold yellow]Recommended today ({args.method}):[/] {rec['title']} by {rec['author']}")
+    if not args.recommend_query is None:
+        console.print(f"[bold yellow]Recommended for '{args.recommend_query}':[/] {rec['title']} by {rec['author']}")
+    else:
+        if not args.list_only:
+            console.print(f"Library contains {len(books)} books.")
+            console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
 
     conn.close()
 
