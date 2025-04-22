@@ -144,21 +144,21 @@ def display_books_table(books):
 
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--method", choices=["openai","tfidf"], default="tfidf")
-    parser.add_argument("--list-only", action="store_true")
-    parser.add_argument("--recommend-only", action="store_true")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("-m", "--method", choices=["openai","tfidf"], default="tfidf",
+                        help="Recommendation method (default: tfidf)")
+    parser.add_argument("-l", "--list", dest="list_only", action="store_true",
+                        help="Only list books")
+    parser.add_argument("-r", "--recommend", dest="recommend_only", action="store_true",
+                        help="Only recommend a book")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
-
-    # Always load Calibre credentials
     base_url, user, password, library = load_calibre_credentials()
     session = requests.Session()
     session.auth = HTTPDigestAuth(user, password)
     session.headers.update({'Accept': 'application/json'})
 
-    # Load OpenAI credentials only if needed
     if args.method == "openai":
         load_openai_credentials()
 
@@ -176,7 +176,7 @@ def main():
         conn.close()
         return
 
-    # gather past recommendations
+    # gather history
     cur = conn.cursor()
     cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
@@ -184,13 +184,13 @@ def main():
     if args.method == "tfidf":
         rec_id = recommend_tfidf(books, past_ids, logger)
     else:
-        # OpenAI method placeholder
+        # placeholder for openai
         rec_id = recommend_tfidf(books, past_ids, logger)
 
     # store recommendation
     today = date.today().isoformat()
     cur.execute(
-        'INSERT INTO recommendations (rec_date, book_id) VALUES (?, ?)',
+        'INSERT OR REPLACE INTO recommendations (rec_date, book_id) VALUES (?, ?)',
         (today, rec_id)
     )
     conn.commit()
