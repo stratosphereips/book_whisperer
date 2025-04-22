@@ -25,16 +25,22 @@ def configure_logging(debug: bool):
     )
     return logging.getLogger(__name__)
 
-def load_credentials():
+def load_calibre_credentials():
     load_dotenv()
     base_url = os.getenv("CALIBRE_URL")
     user = os.getenv("CALIBRE_USER")
     password = os.getenv("CALIBRE_PASS")
     library = os.getenv("CALIBRE_LIBRARY", "Calibre_Library")
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not (base_url and user and password and openai.api_key):
-        raise ValueError("Please set CALIBRE_URL, CALIBRE_USER, CALIBRE_PASS, CALIBRE_LIBRARY, and OPENAI_API_KEY in .env")
+    if not (base_url and user and password):
+        raise ValueError("Please set CALIBRE_URL, CALIBRE_USER, and CALIBRE_PASS in .env")
     return base_url.rstrip('/'), user, password, library
+
+def load_openai_credentials():
+    load_dotenv()
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise ValueError("Please set OPENAI_API_KEY in .env for OpenAI method")
+    openai.api_key = key
 
 def init_db():
     conn = sqlite3.connect(CACHE_DB)
@@ -97,9 +103,9 @@ def fetch_books(session, base_url, library, logger, ids):
         info = resp.json()
         title = info.get('title', f"Book {bid}")
         authors = info.get('authors') or []
-        author = ', '.join(authors) if isinstance(authors, list) else str(authors)
+        author = ', '.join(authors)
         tags = info.get('tags') or []
-        topic = ', '.join(tags) if isinstance(tags, list) else str(tags)
+        topic = ', '.join(tags)
         books.append({'id': bid, 'title': title, 'author': author, 'topic': topic})
     return books
 
@@ -139,16 +145,22 @@ def display_books_table(books):
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--method", choices=["openai","tfidf"], default="openai")
+    parser.add_argument("--method", choices=["openai","tfidf"], default="tfidf")
     parser.add_argument("--list-only", action="store_true")
     parser.add_argument("--recommend-only", action="store_true")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
-    base_url, user, password, library = load_credentials()
+
+    # Always load Calibre credentials
+    base_url, user, password, library = load_calibre_credentials()
     session = requests.Session()
     session.auth = HTTPDigestAuth(user, password)
     session.headers.update({'Accept': 'application/json'})
+
+    # Load OpenAI credentials only if needed
+    if args.method == "openai":
+        load_openai_credentials()
 
     conn = init_db()
     ids = fetch_book_ids(session, base_url, library, logger)
@@ -164,7 +176,7 @@ def main():
         conn.close()
         return
 
-    # collect history
+    # gather past recommendations
     cur = conn.cursor()
     cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
@@ -172,10 +184,10 @@ def main():
     if args.method == "tfidf":
         rec_id = recommend_tfidf(books, past_ids, logger)
     else:
-        # fallback to tfidf or openai could be implemented
+        # OpenAI method placeholder
         rec_id = recommend_tfidf(books, past_ids, logger)
 
-    # store today's recommendation
+    # store recommendation
     today = date.today().isoformat()
     cur.execute(
         'INSERT INTO recommendations (rec_date, book_id) VALUES (?, ?)',
@@ -183,7 +195,7 @@ def main():
     )
     conn.commit()
 
-    rec = next(b for b in books if b['id']==rec_id)
+    rec = next(b for b in books if b['id'] == rec_id)
     if not args.recommend_only:
         console.print(f"Library contains {len(books)} books.")
     console.print(f"[bold yellow]Recommended today ({args.method}):[/] {rec['title']} by {rec['author']}")
