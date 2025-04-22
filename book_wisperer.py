@@ -46,7 +46,7 @@ def init_db():
     ''')
     cur.execute('''
         CREATE TABLE IF NOT EXISTS recommendations (
-            rec_date TEXT PRIMARY KEY,
+            rec_date TEXT,
             book_id TEXT
         )
     ''')
@@ -105,11 +105,11 @@ def fetch_books(session, base_url, library, logger, ids):
     return books
 
 def ask_openai_recommendation_full(books, past_ids, logger, debug=False):
-    book_lines = [
+    lines = [
         f"{b['id']}: Title='{b['title']}' | Author='{b['author']}' | Topics='{b['topic']}'"
         for b in books
     ]
-    books_str = "\n".join(book_lines)
+    books_str = "\n".join(lines)
     past_str = "\n".join(f"- {pid}" for pid in past_ids) if past_ids else "(none)"
     prompt = (
         f"You are a thoughtful book recommender assistant.\n"
@@ -120,48 +120,20 @@ def ask_openai_recommendation_full(books, past_ids, logger, debug=False):
     )
     if debug:
         logger.debug(f"OpenAI prompt:\n{prompt}")
-    response = openai.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You recommend books without repeating past suggestions."},
+            {"role": "system", "content": "Recommend books without repeating past suggestions."},
             {"role": "user", "content": prompt},
         ]
     )
-    return response.choices[0].message.content.strip()
-
-def get_or_create_recommendation(conn, books, logger, debug=False):
-    today = date.today().isoformat()
-    cur = conn.cursor()
-    cur.execute('SELECT book_id FROM recommendations WHERE rec_date=?', (today,))
-    row = cur.fetchone()
-    if row:
-        logger.debug(f"Existing rec for {today}: {row[0]}")
-        return next(b for b in books if b['id'] == row[0])
-    cur.execute('SELECT book_id FROM recommendations')
-    past_ids = [r[0] for r in cur.fetchall()]
-    rec_id = ask_openai_recommendation_full(books, past_ids, logger, debug)
-    cur.execute('INSERT OR REPLACE INTO recommendations (rec_date, book_id) VALUES (?,?)',
-                (today, rec_id))
-    conn.commit()
-    return next(b for b in books if b['id'] == rec_id)
-
-def display_books_table(books):
-    console = Console()
-    table = Table(title="Calibre Library Books")
-    table.add_column("ID", style="dim")
-    table.add_column("Title", style="bold cyan")
-    table.add_column("Author", style="green")
-    table.add_column("Topic", style="magenta")
-    for b in books:
-        table.add_row(b['id'], b['title'], b['author'], b['topic'])
-    console.print(table)
+    return resp.choices[0].message.content.strip()
 
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging and prompt logging")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--list-only", action="store_true", help="Only list books")
-    group.add_argument("--recommend-only", action="store_true", help="Only recommend a book")
+    parser.add_argument("--list-only", action="store_true", help="Only list books")
+    parser.add_argument("--recommend-only", action="store_true", help="Only recommend a book")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
@@ -182,11 +154,19 @@ def main():
 
     if args.list_only:
         display_books_table(books)
-    else:
-        # always only summary & recommendation
-        rec = get_or_create_recommendation(conn, books, logger, args.debug)
-        console.print(f"Library contains {len(books)} books.")
-        console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
+        conn.close()
+        return
+
+    # Always ask OpenAI, ignoring today's recommendation
+    cur = conn.cursor()
+    cur.execute('SELECT book_id FROM recommendations')
+    past_ids = [row[0] for row in cur.fetchall()]
+    rec_id = ask_openai_recommendation_full(books, past_ids, logger, args.debug)
+    cur.execute('INSERT INTO recommendations (rec_date, book_id) VALUES (?,?)', (date.today().isoformat(), rec_id))
+    conn.commit()
+    rec = next(b for b in books if b['id'] == rec_id)
+    console.print(f"Library contains {len(books)} books.")
+    console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
 
     conn.close()
 
