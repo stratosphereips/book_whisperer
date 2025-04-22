@@ -3,7 +3,7 @@ import os
 import logging
 import argparse
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from dotenv import load_dotenv
 import requests
 from requests.auth import HTTPDigestAuth
@@ -44,6 +44,7 @@ def load_credentials():
 def init_db():
     conn = sqlite3.connect(CACHE_DB)
     cur = conn.cursor()
+    # books table
     cur.execute('''
         CREATE TABLE IF NOT EXISTS books (
             id TEXT PRIMARY KEY,
@@ -52,9 +53,10 @@ def init_db():
             topic TEXT
         )
     ''')
+    # recommendations history (no uniqueness constraint)
     cur.execute('''
         CREATE TABLE IF NOT EXISTS recommendations (
-            rec_date TEXT,
+            rec_datetime TEXT,
             book_id TEXT
         )
     ''')
@@ -119,25 +121,20 @@ def fetch_books(session, base_url, library, logger, ids):
 
 
 def recommend_tfidf(books, past_ids, logger):
-    # Prepare TF-IDF matrix
     docs = [f"{b['title']} {b['author']} {b['topic']}" for b in books]
     vectorizer = TfidfVectorizer(stop_words='english')
     X = vectorizer.fit_transform(docs)
 
     if past_ids:
-        # Compute user profile vector by averaging past book vectors
         indices = [i for i, b in enumerate(books) if b['id'] in past_ids]
         profile = X[indices].mean(axis=0)
         profile = np.asarray(profile)
-        sims = cosine_similarity(X, profile)
-        sims = sims.flatten()
-        # Exclude already recommended
+        sims = cosine_similarity(X, profile).flatten()
         for i, b in enumerate(books):
             if b['id'] in past_ids:
                 sims[i] = -1
         idx = int(sims.argmax())
     else:
-        # No past, pick highest TF-IDF norm
         norms = np.asarray(X.power(2).sum(axis=1)).flatten()
         idx = int(norms.argmax())
 
@@ -212,24 +209,26 @@ def main():
         conn.close()
         return
 
-    # Get past recommendations to avoid repeats
+    # gather all past recommendations
     cur = conn.cursor()
     cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
 
+    # always recommend using chosen method
     if args.method == 'tfidf':
         rec_id = recommend_tfidf(books, past_ids, logger)
     else:
         rec_id = ask_openai_recommendation_full(books, past_ids, logger, args.debug)
 
-    # Store today's recommendation
-    today = date.today().isoformat()
-    cur.execute(        'INSERT OR REPLACE INTO recommendations (rec_date, book_id) VALUES (?, ?)',
-        (today, rec_id)
+    # record recommendation with datetime stamp
+    now = datetime.now().isoformat()
+    cur.execute(
+        'INSERT INTO recommendations (rec_datetime, book_id) VALUES (?,?)',
+        (now, rec_id)
     )
     conn.commit()
-
     rec = next(b for b in books if b['id'] == rec_id)
+
     if not args.recommend_only:
         console.print(f"Library contains {len(books)} books.")
     console.print(f"[bold yellow]Recommended today ({args.method}):[/] {rec['title']} by {rec['author']}")
@@ -238,4 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
