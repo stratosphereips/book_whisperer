@@ -131,7 +131,6 @@ def get_or_create_recommendation(conn, books, logger):
             "Choose one book ID to recommend to the user today. Reply with the ID only."
         )
         try:
-            # Updated for openai>=1.0.0
             response = openai.chat.completions.create(
                 model='gpt-3.5-turbo',
                 messages=[
@@ -153,12 +152,8 @@ def get_or_create_recommendation(conn, books, logger):
     return next((b for b in books if b['id'] == rec_id), None)
 
 
-def display_books_table(books, recommendation=None):
+def display_books_table(books):
     console = Console()
-    if recommendation:
-        console.print(
-            f"[bold yellow]Today's recommendation:[/] {recommendation['title']} by {recommendation['author']}"
-        )
     table = Table(title="Calibre Library Books")
     table.add_column("ID", justify="right", style="dim")
     table.add_column("Title", style="bold cyan")
@@ -176,9 +171,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fetch and list Calibre books in the console."
     )
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable DEBUG logging output"
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging output")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--list-only", action="store_true", help="List all books without recommendation")
+    group.add_argument("--recommend-only", action="store_true", help="Get recommendation only, without listing books")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
@@ -189,21 +185,29 @@ def main():
 
     conn = init_db()
     try:
-        remote_ids = fetch_book_ids(
-            session, base_url, library, logger
-        )
+        remote_ids = fetch_book_ids(session, base_url, library, logger)
         cached_ids = get_cached_ids(conn)
         if set(remote_ids) == cached_ids:
             logger.info("No change in book list; loading from cache")
             books = load_cached_books(conn)
         else:
             logger.info("Book list changed; fetching details and updating cache")
-            books = fetch_books(
-                session, base_url, library, logger, remote_ids
-            )
+            books = fetch_books(session, base_url, library, logger, remote_ids)
             save_books(conn, books, logger)
-        rec = get_or_create_recommendation(conn, books, logger)
-        display_books_table(books, recommendation=rec)
+        if args.list_only:
+            display_books_table(books)
+        elif args.recommend_only:
+            rec = get_or_create_recommendation(conn, books, logger)
+            console = Console()
+            console.print(f"Library contains {len(books)} books.")
+            if rec:
+                console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
+        else:
+            rec = get_or_create_recommendation(conn, books, logger)
+            console = Console()
+            console.print(f"Library contains {len(books)} books.")
+            if rec:
+                console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
     finally:
@@ -211,3 +215,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
