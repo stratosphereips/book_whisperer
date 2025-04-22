@@ -18,8 +18,7 @@ def configure_logging(debug: bool):
         format='%(asctime)s [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    logger = logging.getLogger(__name__)
-    return logger
+    return logging.getLogger(__name__)
 
 
 def load_credentials():
@@ -46,8 +45,9 @@ def fetch_books(session, base_url, library, logger):
     """
     Fetch all book IDs via AJAX search, then fetch each book's details.
     Uses HTTP Digest authentication.
-    Returns list of dicts: {'id', 'title', 'topic'}
+    Returns list of dicts: {'id', 'title', 'author', 'topic'}
     """
+    # Step 1: get all book IDs
     search_url = f"{base_url}/ajax/search"
     params = {'library_id': library, 'pattern': '', 'start': 0, 'num': 10000}
     logger.debug(f"GET {search_url} params={params}")
@@ -55,22 +55,28 @@ def fetch_books(session, base_url, library, logger):
     logger.debug(f"Search status {resp.status_code}")
     resp.raise_for_status()
     data = resp.json()
-    book_ids = data.get('book_ids') or data.get('results') or []
+    # 'book_ids' contains list of integer IDs
+    book_ids = data.get('book_ids') or []
     logger.info(f"Found {len(book_ids)} book IDs")
 
     books = []
+    # Step 2: fetch details for each ID
     for bid in book_ids:
         detail_url = f"{base_url}/ajax/book/{bid}/{library}"
+        logger.debug(f"GET {detail_url}")
         resp2 = session.get(detail_url)
         logger.debug(f"Detail [{bid}] status {resp2.status_code}")
         try:
             resp2.raise_for_status()
             info = resp2.json()
             title = info.get('title', f"Book {bid}")
+            # Authors list
+            authors = info.get('authors') or []
+            author = ', '.join(authors) if isinstance(authors, list) else str(authors)
             tags = info.get('tags') or []
             topic = ', '.join(tags) if isinstance(tags, list) else str(tags)
-            books.append({'id': str(bid), 'title': title, 'topic': topic})
-            logger.debug(f"Loaded book {bid}: {title} [{topic}]")
+            books.append({'id': str(bid), 'title': title, 'author': author, 'topic': topic})
+            logger.debug(f"Loaded book {bid}: {title} by {author} [{topic}]")
         except Exception as e:
             logger.exception(f"Error loading details for {bid}: {e}")
     return books
@@ -84,6 +90,7 @@ def display_books_table(books):
     table = Table(title="Calibre Library Books")
     table.add_column("ID", justify="right", style="dim")
     table.add_column("Title", style="bold cyan")
+    table.add_column("Author", style="green")
     table.add_column("Topic", style="magenta")
 
     if not books:
@@ -91,7 +98,7 @@ def display_books_table(books):
         return
 
     for b in books:
-        table.add_row(b['id'], b['title'], b['topic'])
+        table.add_row(b['id'], b['title'], b['author'], b['topic'])
 
     console.print(table)
 
@@ -119,4 +126,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
