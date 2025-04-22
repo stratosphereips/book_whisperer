@@ -14,7 +14,11 @@ CACHE_DB = 'books_cache.db'
 
 
 def configure_logging(debug: bool):
-    level = logging.DEBUG if debug else logging.INFO
+    """
+    Configure logging level and format.
+    If debug is True, show DEBUG logs; otherwise, show only WARNING and above.
+    """
+    level = logging.DEBUG if debug else logging.WARNING
     logging.basicConfig(
         level=level,
         format='%(asctime)s [%(levelname)s] %(message)s',
