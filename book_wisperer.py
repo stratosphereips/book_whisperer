@@ -82,7 +82,8 @@ def fetch_book_ids(session, base_url, library, logger):
     resp = session.get(url, params=params)
     resp.raise_for_status()
     data = resp.json()
-    return data.get('book_ids') or []
+    # Convert all IDs to strings for consistent comparison
+    return [str(bid) for bid in (data.get('book_ids') or [])]
 
 
 def fetch_books(session, base_url, library, logger, ids):
@@ -98,9 +99,9 @@ def fetch_books(session, base_url, library, logger, ids):
             author = ', '.join(authors) if isinstance(authors, list) else str(authors)
             tags = info.get('tags') or []
             topic = ', '.join(tags) if isinstance(tags, list) else str(tags)
-            books.append({'id': str(bid), 'title': title, 'author': author, 'topic': topic})
-        except Exception as e:
-            logger.exception(f"Error loading details for {bid}: {e}")
+            books.append({'id': bid, 'title': title, 'author': author, 'topic': topic})
+        except Exception:
+            logger.exception(f"Error loading details for {bid}")
     return books
 
 
@@ -132,7 +133,6 @@ def main():
 
     conn = init_db()
     try:
-        # Determine if list changed
         remote_ids = fetch_book_ids(session, base_url, library, logger)
         cached_ids = get_cached_ids(conn)
         if set(remote_ids) == cached_ids:
@@ -150,3 +150,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
