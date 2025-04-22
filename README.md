@@ -27,8 +27,8 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 
 1. Clone this repo:
    ```bash
-   git clone https://github.com/youruser/calibre-book-recommender.git
-   cd calibre-book-recommender
+   git clone git@github.com:stratosphereips/book_whisperer.git
+   cd book_whisperer
    ```
 2. Create a virtual environment and install dependencies:
    ```bash
@@ -39,10 +39,9 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 3. Create a `.env` in the root with your Calibre server info and (optionally) OpenAI key:
    ```dotenv
    # Calibre Web
-   CALIBRE_URL=http://147.32.80.69:8081
+   CALIBRE_URL=http://xx.xx.xx.xx:8081
    CALIBRE_USER=your_user
    CALIBRE_PASS=your_pass
-   CALIBRE_LIBRARY=Calibre_Library
 
    # OpenAI (optional)
    OPENAI_API_KEY=sk-...yourkey...
@@ -90,7 +89,8 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 1. **Daily reading recommendation** (TF-IDF default):
    ```bash
    ./book_wisperer.py
-   # Library contains 659 books.\nRecommended today (tfidf): The Hobbit by J.R.R. Tolkien 🧝‍♂️
+   # Library contains 659 books.
+   Recommended today (tfidf): The Hobbit by J.R.R. Tolkien 🧝‍♂️
    ```
 
 2. **Themed suggestion**:
@@ -120,6 +120,6 @@ Feel free to open issues or PRs! Your feedback and enhancements are welcome. ✨
 
 ---
 
-© 2025 Your Name. Built with ❤️ and Python.
+© 2025 eldraco. Built with ❤️  and Python.
 
 
