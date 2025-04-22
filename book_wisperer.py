@@ -10,8 +10,12 @@ from requests.auth import HTTPDigestAuth
 from rich.console import Console
 from rich.table import Table
 import openai
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 CACHE_DB = 'books_cache.db'
+
 
 def configure_logging(debug: bool):
     level = logging.DEBUG if debug else logging.WARNING
@@ -22,6 +26,7 @@ def configure_logging(debug: bool):
     )
     return logging.getLogger(__name__)
 
+
 def load_credentials():
     load_dotenv()
     base_url = os.getenv("CALIBRE_URL")
@@ -30,8 +35,11 @@ def load_credentials():
     library = os.getenv("CALIBRE_LIBRARY", "Calibre_Library")
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not (base_url and user and password and openai.api_key):
-        raise ValueError("Please set CALIBRE_URL, CALIBRE_USER, CALIBRE_PASS, CALIBRE_LIBRARY, and OPENAI_API_KEY in .env")
+        raise ValueError(
+            "Please set CALIBRE_URL, CALIBRE_USER, CALIBRE_PASS, CALIBRE_LIBRARY, and OPENAI_API_KEY in .env"
+        )
     return base_url.rstrip('/'), user, password, library
+
 
 def init_db():
     conn = sqlite3.connect(CACHE_DB)
@@ -53,10 +61,12 @@ def init_db():
     conn.commit()
     return conn
 
+
 def get_cached_ids(conn):
     cur = conn.cursor()
     cur.execute('SELECT id FROM books')
     return {row[0] for row in cur.fetchall()}
+
 
 def load_cached_books(conn):
     cur = conn.cursor()
@@ -65,6 +75,7 @@ def load_cached_books(conn):
         {'id': row[0], 'title': row[1], 'author': row[2], 'topic': row[3]}
         for row in cur.fetchall()
     ]
+
 
 def save_books(conn, books, logger):
     cur = conn.cursor()
@@ -78,6 +89,7 @@ def save_books(conn, books, logger):
         )
     conn.commit()
 
+
 def fetch_book_ids(session, base_url, library, logger):
     url = f"{base_url}/ajax/search"
     params = {'library_id': library, 'pattern': '', 'start': 0, 'num': 10000}
@@ -86,6 +98,7 @@ def fetch_book_ids(session, base_url, library, logger):
     resp.raise_for_status()
     data = resp.json()
     return [str(bid) for bid in (data.get('book_ids') or [])]
+
 
 def fetch_books(session, base_url, library, logger, ids):
     books = []
@@ -103,6 +116,35 @@ def fetch_books(session, base_url, library, logger, ids):
         except Exception:
             logger.exception(f"Failed loading details for {bid}")
     return books
+
+
+def recommend_tfidf(books, past_ids, logger):
+    # Prepare TF-IDF matrix
+    docs = [f"{b['title']} {b['author']} {b['topic']}" for b in books]
+    vectorizer = TfidfVectorizer(stop_words='english')
+    X = vectorizer.fit_transform(docs)
+
+    if past_ids:
+        # Compute user profile vector by averaging past book vectors
+        indices = [i for i, b in enumerate(books) if b['id'] in past_ids]
+        profile = X[indices].mean(axis=0)
+        profile = np.asarray(profile)
+        sims = cosine_similarity(X, profile)
+        sims = sims.flatten()
+        # Exclude already recommended
+        for i, b in enumerate(books):
+            if b['id'] in past_ids:
+                sims[i] = -1
+        idx = int(sims.argmax())
+    else:
+        # No past, pick highest TF-IDF norm
+        norms = np.asarray(X.power(2).sum(axis=1)).flatten()
+        idx = int(norms.argmax())
+
+    rec = books[idx]
+    logger.info(f"TF-IDF recommended book ID {rec['id']}")
+    return rec['id']
+
 
 def ask_openai_recommendation_full(books, past_ids, logger, debug=False):
     lines = [
@@ -129,9 +171,23 @@ def ask_openai_recommendation_full(books, past_ids, logger, debug=False):
     )
     return resp.choices[0].message.content.strip()
 
+
+def display_books_table(books):
+    console = Console()
+    table = Table(title="Calibre Library Books")
+    table.add_column("ID", style="dim")
+    table.add_column("Title", style="bold cyan")
+    table.add_column("Author", style="green")
+    table.add_column("Topic", style="magenta")
+    for b in books:
+        table.add_row(b['id'], b['title'], b['author'], b['topic'])
+    console.print(table)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging and prompt logging")
+    parser.add_argument("--method", choices=["openai","tfidf"], default="openai", help="Recommendation method")
     parser.add_argument("--list-only", action="store_true", help="Only list books")
     parser.add_argument("--recommend-only", action="store_true", help="Only recommend a book")
     args = parser.parse_args()
@@ -151,24 +207,35 @@ def main():
         save_books(conn, books, logger)
 
     console = Console()
-
     if args.list_only:
         display_books_table(books)
         conn.close()
         return
 
-    # Always ask OpenAI, ignoring today's recommendation
+    # Get past recommendations to avoid repeats
     cur = conn.cursor()
     cur.execute('SELECT book_id FROM recommendations')
-    past_ids = [row[0] for row in cur.fetchall()]
-    rec_id = ask_openai_recommendation_full(books, past_ids, logger, args.debug)
-    cur.execute('INSERT INTO recommendations (rec_date, book_id) VALUES (?,?)', (date.today().isoformat(), rec_id))
+    past_ids = [r[0] for r in cur.fetchall()]
+
+    if args.method == 'tfidf':
+        rec_id = recommend_tfidf(books, past_ids, logger)
+    else:
+        rec_id = ask_openai_recommendation_full(books, past_ids, logger, args.debug)
+
+    # Store today's recommendation
+    today = date.today().isoformat()
+    cur.execute(        'INSERT OR REPLACE INTO recommendations (rec_date, book_id) VALUES (?, ?)',
+        (today, rec_id)
+    )
     conn.commit()
+
     rec = next(b for b in books if b['id'] == rec_id)
-    console.print(f"Library contains {len(books)} books.")
-    console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
+    if not args.recommend_only:
+        console.print(f"Library contains {len(books)} books.")
+    console.print(f"[bold yellow]Recommended today ({args.method}):[/] {rec['title']} by {rec['author']}")
 
     conn.close()
 
 if __name__ == "__main__":
     main()
+
