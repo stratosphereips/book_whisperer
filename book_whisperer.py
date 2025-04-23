@@ -12,10 +12,7 @@ from rich.table import Table
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
-
+from fuzzywuzzy import fuzz, process
 
 CACHE_DB = 'books_cache.db'
 
@@ -111,16 +108,13 @@ def recommend_tfidf(books, past_ids, logger):
     X = vectorizer.fit_transform(docs)
     if past_ids:
         indices = [i for i, b in enumerate(books) if b['id'] in past_ids]
-        profile = X[indices].mean(axis=0)
-        profile = np.asarray(profile)
+        profile = X[indices].mean(axis=0); profile = np.asarray(profile)
         sims = cosine_similarity(X, profile).flatten()
         for i, b in enumerate(books):
-            if b['id'] in past_ids:
-                sims[i] = -1
+            if b['id'] in past_ids: sims[i] = -1
         idx = int(sims.argmax())
     else:
-        norms = np.asarray(X.power(2).sum(axis=1)).flatten()
-        idx = int(norms.argmax())
+        norms = np.asarray(X.power(2).sum(axis=1)).flatten(); idx = int(norms.argmax())
     rec = books[idx]
     logger.info(f"TF-IDF recommended book ID {rec['id']}")
     return rec['id']
@@ -132,24 +126,25 @@ def recommend_query(books, query, past_ids, logger):
     q_vec = vectorizer.transform([query])
     sims = cosine_similarity(X, q_vec).flatten()
     for i, b in enumerate(books):
-        if b['id'] in past_ids:
-            sims[i] = -1
+        if b['id'] in past_ids: sims[i] = -1
     idx = int(sims.argmax())
     rec = books[idx]
     logger.info(f"Query-TFIDF '{query}' recommended book ID {rec['id']}")
     return rec['id']
 
-def fuzzy_query(books, query, logger):
+def fuzzy_query(books, query, past_ids, logger):
     titles = [b['title'] for b in books]
-    best_match = process.extract(query, titles, scorer=fuzz.token_set_ratio, limit=1)[0]
-    logger.debug(f"Fuzzy match for '{query}': {best_match}")
-    if best_match[1] < 80:
-        logger.warning(f"No good match found for '{query}'")
-        return None
-    idx = titles.index(best_match[0])
-    rec = books[idx]
-    logger.info(f"Fuzzy query '{query}' recommended book ID {rec['id']}")
-    return rec['id']
+    matches = process.extract(query, titles, scorer=fuzz.token_set_ratio, limit=10)
+    for title, score in matches:
+        if score < 80:
+            break
+        idx = titles.index(title)
+        b_id = books[idx]['id']
+        if b_id not in past_ids:
+            logger.info(f"Fuzzy query '{query}' recommended book ID {b_id}")
+            return b_id
+    logger.warning(f"No suitable fuzzy match found for '{query}', falling back")
+    return None
 
 def display_books_table(books):
     console = Console()
@@ -164,64 +159,58 @@ def display_books_table(books):
 
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("-m", "--method", choices=["tfidf", "fuzzy"], default="tfidf", help="Recommendation method")
-    parser.add_argument("-l", "--list", action="store_true", dest="list_only", help="Only list books")
-    parser.add_argument("-r", "--recommend", nargs="?", const="", dest="recommend_query",
-                        help="Recommend a book; optionally provide a query to search similar books")
+    parser.add_argument("-d","--debug",action="store_true",help="Enable debug logging")
+    parser.add_argument("-m","--method",choices=["tfidf","fuzzy"],default="tfidf",
+                        help="Recommendation method")
+    parser.add_argument("-l","--list",action="store_true",dest="list_only",
+                        help="Only list books")
+    parser.add_argument("-r","--recommend",nargs="?",const="",dest="recommend_query",
+                        help="Recommend a book; optionally provide a query")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
     base_url, user, password, library = load_calibre_credentials()
-    session = requests.Session()
-    session.auth = HTTPDigestAuth(user, password)
-    session.headers.update({'Accept': 'application/json'})
+    session = requests.Session(); session.auth = HTTPDigestAuth(user, password)
+    session.headers.update({'Accept':'application/json'})
 
     conn = init_db()
-    ids = fetch_book_ids(session, base_url, library, logger)
-    if set(ids) == get_cached_ids(conn):
-        books = load_cached_books(conn)
-    else:
-        books = fetch_books(session, base_url, library, logger, ids)
-        save_books(conn, books, logger)
 
-    console = Console()
-
-    if args.list_only:
-        display_books_table(books)
+    if args.clear:
+        conn.execute('DELETE FROM recommendations')
+        conn.commit()
+        print("🔄 Recommendation history cleared.")
         conn.close()
         return
 
-    # gather history
-    cur = conn.cursor()
-    cur.execute('SELECT book_id FROM recommendations')
+    ids = fetch_book_ids(session, base_url, library, logger)
+    books = load_cached_books(conn) if set(ids)==get_cached_ids(conn) else (save_books(conn, fetch_books(session, base_url, library, logger, ids), logger) or load_cached_books(conn))
+
+    if args.list_only:
+        display_books_table(books); conn.close(); return
+
+    cur = conn.cursor(); cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
 
-    # choose recommendation mode
-    if args.method == "fuzzy":
-        rec_id = fuzzy_query(books, args.recommend_query, logger)
-    elif args.recommend_query is not None and args.recommend_query != "":
+    if args.method=="fuzzy":
+        rec_id = fuzzy_query(books, args.recommend_query or "", past_ids, logger) or recommend_query(books, args.recommend_query or "", past_ids, logger)
+    elif args.recommend_query is not None and args.recommend_query!="":
         rec_id = recommend_query(books, args.recommend_query, past_ids, logger)
     else:
         rec_id = recommend_tfidf(books, past_ids, logger)
 
-    # record recommendation
     today = date.today().isoformat()
-    cur.execute(
-        'INSERT INTO recommendations (rec_date, book_id) VALUES (?, ?)',
-        (today, rec_id)
-    )
+    conn.execute('INSERT INTO recommendations (rec_date, book_id) VALUES (?,?)',(today, rec_id))
     conn.commit()
 
-    rec = next(b for b in books if b['id'] == rec_id)
-    if not args.recommend_query is None:
+    rec = next(b for b in books if b['id']==rec_id)
+    console = Console()
+    if args.recommend_query is not None:
         console.print(f"[bold yellow]Recommended for '{args.recommend_query}':[/] {rec['title']} by {rec['author']}")
     else:
-        if not args.list_only:
-            console.print(f"Library contains {len(books)} books.")
-            console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
+        console.print(f"Library contains {len(books)} books.") 
+        console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
 
     conn.close()
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
