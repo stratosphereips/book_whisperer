@@ -198,7 +198,9 @@ def main():
     past_ids = [r[0] for r in cur.fetchall()]
 
     # choose recommendation mode
-    if args.recommend_query is not None and args.recommend_query != "":
+    if args.method == "fuzzy":
+        rec_id = fuzzy_query(books, args.recommend_query, logger)
+    elif args.recommend_query is not None and args.recommend_query != "":
         rec_id = recommend_query(books, args.recommend_query, past_ids, logger)
     else:
         rec_id = recommend_tfidf(books, past_ids, logger)
