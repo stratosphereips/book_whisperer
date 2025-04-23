@@ -1,6 +1,6 @@
 # 📚 Calibre Book Recommender
 
-Welcome to **Calibre Book Recommender**, a command-line tool that fetches your Calibre library catalog and suggests what to read next, using either TF-IDF similarity or (future) AI methods.
+Welcome to **Calibre Book Recommender**, a command-line tool that fetches your Calibre library catalog and suggests what to read next using various methods like TF-IDF, fuzzy matching, or query-based similarity, and can return multiple recommendations at once.
 
 ---
 
@@ -8,18 +8,21 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 
 - Automatically recommend daily reading from your Calibre library 📖
 - Avoid recommending the same book twice until every book has been suggested 🔄
-- Support fuzzy thematic searches (e.g., `-r fantasy`) 🧙‍♂️
+- Support thematic searches (e.g., `-r fantasy`) and fuzzy title matching 🧙‍♂️
+- Return top **X** recommendations in one go 📋
 - Lightweight: pure Python, SQLite for caching, no heavy dependencies by default 🐍
 
 ---
 
 ## 🚀 Features
 
-- **TF-IDF**-based content similarity (default method) 📝
-- Optional **OpenAI**-powered recommendations (if configured) 🤖
+- **TF-IDF**-based content similarity (default) 📝
+- **Fuzzy title matching** using FuzzyWuzzy 🔍
+- **Query-based TF-IDF** similarity for custom search strings ✏️
+- Return **top X** recommendations with `-x` 📊
 - Local **SQLite** cache of book metadata and history 🗄️
 - Rich console output with **Rich** tables 🌈
-- CLI flags for listing, recommending, and debugging ⚙️
+- CLI flags for listing, recommending, clearing history, and debugging ⚙️
 
 ---
 
@@ -30,21 +33,22 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
    git clone git@github.com:stratosphereips/book_whisperer.git
    cd book_whisperer
    ```
-2. Create a virtual environment and install dependencies:
+2. Create and activate a virtual environment:
    ```bash
    python3 -m venv venv
    source venv/bin/activate
+   ```
+3. Install dependencies:
+   ```bash
    pip install -r requirements.txt
    ```
-3. Create a `.env` in the root with your Calibre server info and (optionally) OpenAI key:
+4. Create a `.env` in the project root with your Calibre server info and (optionally) OpenAI key:
    ```dotenv
-   # Calibre Web
    CALIBRE_URL=http://xx.xx.xx.xx:8081
    CALIBRE_USER=your_user
    CALIBRE_PASS=your_pass
 
-   # OpenAI (optional)
-   OPENAI_API_KEY=sk-...yourkey...
+   # OPENAI_API_KEY=sk-... (if using OpenAI method)
    ```
 
 ---
@@ -55,36 +59,43 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 # List all books
 ./book_wisperer.py -l
 
-# Recommend a book based on TF-IDF (default)
+# Recommend 1 book (TF-IDF default)
 ./book_wisperer.py
 
-# Recommend only (no count/list)
-./book_wisperer.py -r
+# Recommend 3 books using TF-IDF
+./book_wisperer.py -x 3
 
-# Recommend based on a query (e.g. 'fantasy')
-./book_wisperer.py -r fantasy
+# Recommend a book with a search term
+./book_wisperer.py -r mystery
+
+# Recommend top 2 for 'fantasy'
+./book_wisperer.py -r fantasy -x 2
+
+# Use fuzzy title-matching
+./book_wisperer.py -m fuzzy -r 'python'
+
+# Use query-based TF-IDF explicitly
+./book_wisperer.py -m query -r 'deep learning'
 
 # Debug mode: show internal logs
 ./book_wisperer.py -d
 
-# Switch to OpenAI method (if configured)
-./book_wisperer.py -m openai -r
-
-# Switch to fuzzy search method 
-./book_wisperer.py -m fuzzy -r
-
+# Clear recommendation history
+./book_wisperer.py -c
 ```
 
 ---
 
 ## 📖 Parameters
 
-| Flag            | Alias | Description                                           |
-|-----------------|-------|-------------------------------------------------------|
-| `-l`, `--list`  | N/A   | List all books in a table                             |
-| `-r`, `--recommend` | N/A | Recommend a book. Optionally accept a query string (e.g., `-r mystery`) |
-| `-m`, `--method`| N/A   | Choose `tfidf` (default) or `openai` or `fuzzy` methods          |
-| `-d`, `--debug` | N/A   | Enable debug logging and prompt output                |
+| Flag                | Alias        | Description                                                                                   |
+|---------------------|--------------|-----------------------------------------------------------------------------------------------|
+| `-l`, `--list`      | N/A          | List all books in a formatted table                                                          |
+| `-r`, `--recommend` | N/A          | Recommend books; optionally provide a query string                                            |
+| `-m`, `--method`    | N/A          | Choose method: `tfidf` (default), `fuzzy`, or `query`                                         |
+| `-x`, `--top`       | N/A          | Number of top recommendations to return (default: 1)                                          |
+| `-c`, `--clear`     | N/A          | Clear all past recommendation history                                                        |
+| `-d`, `--debug`     | N/A          | Enable debug logging                                                                         |
 
 ---
 
@@ -94,46 +105,40 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
    ```bash
    ./book_wisperer.py
    # Library contains 659 books.
-   Recommended today (tfidf): The Hobbit by J.R.R. Tolkien 🧝‍♂️
+   # Top 1 recommendation today:
+   #  - The Hobbit by J.R.R. Tolkien 🧝‍♂️
    ```
 
-2. **Themed suggestion**:
+2. **Top 5 thematic picks**:
    ```bash
-   ./book_wisperer.py -r sci-fi
-   # Recommended for 'sci-fi': Dune by Frank Herbert 🚀
+   ./book_wisperer.py -r sci-fi -x 5
+   # Top 5 for 'sci-fi':
+   #  - Dune by Frank Herbert 🚀
+   #  - Neuromancer by William Gibson 🧠
+   #  - Foundation by Isaac Asimov 📚
+   #  - Ender's Game by Orson Scott Card 🛰️
+   #  - Snow Crash by Neal Stephenson 🏙️
    ```
 
-3. **Listing all books**:
+3. **Fuzzy title match**:
    ```bash
-   ./book_wisperer.py -l
-                                                                                                                            Calibre Library Books
-   ┏━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-   ┃ ID  ┃ Title                                                                                 ┃ Author                                                                                ┃ Topic                                                                                ┃
-   ┡━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-   │ 499 │ (ISC)2 CCSP Certified Cloud Security Professional Official Practice Tests             │ Ben Malisow                                                                           │                                                                                      │
-   │ 501 │ (ISC)2® CCSP® Certified Cloud Security Professional: Official Study Guide             │ Ben Malisow                                                                           │                                                                                      │
-   │ 4   │ 101 Design Methods                                                                    │ VIJAY KUMAR                                                                           │                                                                                      │
-   │ 94  │ Understanding Cryptography                                                            │ Christof Paar, Jan Pelzl                                                              │ crypto, cryptography                                                                 │
-   │ 95  │ Cryptography Made Simple                                                              │ Nigel P. Smart                                                                        │ crypto, cryptography                                                                 │
-   │ 792 │ 40 Algorithms Every Programmer Should Know                                            │ Imran Ahmad                                                                           │ coding interview; Self-Taught Programmer; Grokking Algorithms; Python book; Python   │
-   │     │                                                                                       │                                                                                       │ data science; Computational thinking; algorithms and data structures; machine        │
-   │     │                                                                                       │                                                                                       │ learning python; Python algorithms                                                   │
-   │ 707 │ 539738_1_En_Print.indd                                                                │ 0014431                                                                               │                                                                                      │
-   │ 706 │ 539740_1_En_Print.indd                                                                │ 0014813                                                                               │                                                                                      │
-   │ 523 │ 5G Mobile Networks: A Systems Approach                                                │ Larry Peterson, Oğuz Sunay                                                            │                                                                                      │
-   │ 871 │ 97 Things Every Application Security Professional Should Know                         │ Reet Kaur, Yabing Wang                                                                │                                                                                      │
-   │ 171 │ Absolute OpenBSD                                                                      │ Michael W. Lucas                                                                      │ COMPUTERS / Operating Systems / UNIX                                                 │
-   │ 289 │ Active Learning                                                                       │ Burr Settles                                                                          │ gnuplot plot                                                                         │
-   │ 447 │ Advanced Guide to Python 3 Programming                                                │ John Hunt                                                                             │                                                                                      │
-   │ 9   │ Advanced Penetration Testing                                                          │ Wil Allsopp                                                                           │   ```
+   ./book_wisperer.py -m fuzzy -r 'python'
+   # Recommended for 'python':
+   #  - Advanced Guide to Python 3 Programming by John Hunt 🐍
+   ```
 
+4. **Clear recommendation history**:
+   ```bash
+   ./book_wisperer.py -c
+   🔄 Recommendation history cleared.
+   ```
 
 ---
 
 ## 🔄 Caching Behavior
 
-- **Books metadata** is cached locally in `books_cache.db` and refreshed only when the library list changes.
-- **Recommendations history** is stored to avoid repeating until all books have been suggested.
+- **Books metadata**: cached locally in `books_cache.db`, refreshed only when the library list changes.
+- **Recommendations history**: stored to avoid repeats until every book has been suggested.
 
 ---
 
@@ -143,6 +148,6 @@ Feel free to open issues or PRs! Your feedback and enhancements are welcome. ✨
 
 ---
 
-© 2025 eldraco. Built with ❤️  and Python.
+© 2025 eldraco. Built with ❤️ and Python.
 
 
