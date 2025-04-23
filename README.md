@@ -24,6 +24,12 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 - Rich console output with **Rich** tables 🌈
 - CLI flags for listing, recommending, clearing history, and debugging ⚙️
 
+
+---
+## 👽👽👽 Contributors
+
+- [Maria Rigaki](https://github.com/orgs/stratosphereips/people/MariaRigaki)
+
 ---
 
 ## 🛠️ Installation
