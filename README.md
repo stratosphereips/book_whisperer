@@ -69,6 +69,10 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 
 # Switch to OpenAI method (if configured)
 ./book_wisperer.py -m openai -r
+
+# Switch to fuzzy search method 
+./book_wisperer.py -m fuzzy -r
+
 ```
 
 ---
@@ -79,7 +83,7 @@ Welcome to **Calibre Book Recommender**, a command-line tool that fetches your C
 |-----------------|-------|-------------------------------------------------------|
 | `-l`, `--list`  | N/A   | List all books in a table                             |
 | `-r`, `--recommend` | N/A | Recommend a book. Optionally accept a query string (e.g., `-r mystery`) |
-| `-m`, `--method`| N/A   | Choose `tfidf` (default) or `openai` methods          |
+| `-m`, `--method`| N/A   | Choose `tfidf` (default) or `openai` or `fuzzy` methods          |
 | `-d`, `--debug` | N/A   | Enable debug logging and prompt output                |
 
 ---

@@ -4,3 +4,5 @@ rich
 openai
 scikit-learn
 numpy
+fuzzywuzzy
+python-Levenshtein # for fuzzywuzzy
