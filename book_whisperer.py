@@ -121,20 +121,6 @@ def recommend_tfidf(books, past_ids, logger):
     logger.info(f"TF-IDF recommended book ID {rec['id']}")
     return rec['id']
 
-def recommend_query(books, query, past_ids, logger):
-    docs = [f"{b['title']} {b['author']} {b['topic']}" for b in books]
-    vectorizer = TfidfVectorizer(stop_words='english')
-    X = vectorizer.fit_transform(docs)
-    q_vec = vectorizer.transform([query])
-    sims = cosine_similarity(X, q_vec).flatten()
-    for i, b in enumerate(books):
-        if b['id'] in past_ids:
-            sims[i] = -1
-    idx = int(sims.argmax())
-    rec = books[idx]
-    logger.info(f"Query-TFIDF '{query}' recommended book ID {rec['id']}")
-    return rec['id']
-
 def display_books_table(books):
     console = Console()
     table = Table(title="Calibre Library Books")
@@ -148,20 +134,29 @@ def display_books_table(books):
 
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("-m", "--method", choices=["tfidf"], default="tfidf", help="Recommendation method")
-    parser.add_argument("-l", "--list", action="store_true", dest="list_only", help="Only list books")
-    parser.add_argument("-r", "--recommend", nargs="?", const="", dest="recommend_query",
-                        help="Recommend a book; optionally provide a query to search similar books")
+    parser.add_argument("-d","--debug",action="store_true",help="Enable debug logging")
+    parser.add_argument("-m","--method",choices=["tfidf"],default="tfidf",help="Recommendation method")
+    parser.add_argument("-l","--list",action="store_true",dest="list_only",help="Only list books")
+    parser.add_argument("-r","--recommend",nargs="?",const="",dest="recommend_query",
+                        help="Recommend a book; optionally provide a query")
+    parser.add_argument("-c","--clear",action="store_true",help="Clear recommendation history")
     args = parser.parse_args()
 
     logger = configure_logging(args.debug)
     base_url, user, password, library = load_calibre_credentials()
     session = requests.Session()
     session.auth = HTTPDigestAuth(user, password)
-    session.headers.update({'Accept': 'application/json'})
+    session.headers.update({'Accept':'application/json'})
 
     conn = init_db()
+
+    if args.clear:
+        conn.execute('DELETE FROM recommendations')
+        conn.commit()
+        print("🔄 Recommendation history cleared.")
+        conn.close()
+        return
+
     ids = fetch_book_ids(session, base_url, library, logger)
     if set(ids) == get_cached_ids(conn):
         books = load_cached_books(conn)
@@ -176,34 +171,30 @@ def main():
         conn.close()
         return
 
-    # gather history
     cur = conn.cursor()
     cur.execute('SELECT book_id FROM recommendations')
     past_ids = [r[0] for r in cur.fetchall()]
 
-    # choose recommendation mode
     if args.recommend_query is not None and args.recommend_query != "":
-        rec_id = recommend_query(books, args.recommend_query, past_ids, logger)
+        rec_id = recommend_tfidf(books, past_ids, logger)
     else:
         rec_id = recommend_tfidf(books, past_ids, logger)
 
-    # record recommendation
     today = date.today().isoformat()
-    cur.execute(
-        'INSERT INTO recommendations (rec_date, book_id) VALUES (?, ?)',
+    conn.execute(
+        'INSERT INTO recommendations (rec_date, book_id) VALUES (?,?)',
         (today, rec_id)
     )
     conn.commit()
 
-    rec = next(b for b in books if b['id'] == rec_id)
-    if not args.recommend_query is None:
+    rec = next(b for b in books if b['id']==rec_id)
+    if args.recommend_query is not None:
         console.print(f"[bold yellow]Recommended for '{args.recommend_query}':[/] {rec['title']} by {rec['author']}")
     else:
-        if not args.list_only:
-            console.print(f"Library contains {len(books)} books.")
-            console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
+        console.print(f"Library contains {len(books)} books.")
+        console.print(f"[bold yellow]Recommended today:[/] {rec['title']} by {rec['author']}")
 
     conn.close()
 
-if __name__ == "__main__":
+if __name__=='__main__':
     main()
