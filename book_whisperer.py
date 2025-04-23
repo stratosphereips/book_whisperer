@@ -13,6 +13,10 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
+
+
 CACHE_DB = 'books_cache.db'
 
 def configure_logging(debug: bool):
@@ -135,6 +139,18 @@ def recommend_query(books, query, past_ids, logger):
     logger.info(f"Query-TFIDF '{query}' recommended book ID {rec['id']}")
     return rec['id']
 
+def fuzzy_query(books, query, logger):
+    titles = [b['title'] for b in books]
+    best_match = process.extract(query, titles, scorer=fuzz.token_set_ratio, limit=1)[0]
+    logger.debug(f"Fuzzy match for '{query}': {best_match}")
+    if best_match[1] < 80:
+        logger.warning(f"No good match found for '{query}'")
+        return None
+    idx = titles.index(best_match[0])
+    rec = books[idx]
+    logger.info(f"Fuzzy query '{query}' recommended book ID {rec['id']}")
+    return rec['id']
+
 def display_books_table(books):
     console = Console()
     table = Table(title="Calibre Library Books")
@@ -149,7 +165,7 @@ def display_books_table(books):
 def main():
     parser = argparse.ArgumentParser(description="Calibre book recommender.")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("-m", "--method", choices=["tfidf"], default="tfidf", help="Recommendation method")
+    parser.add_argument("-m", "--method", choices=["tfidf", "fuzzy"], default="tfidf", help="Recommendation method")
     parser.add_argument("-l", "--list", action="store_true", dest="list_only", help="Only list books")
     parser.add_argument("-r", "--recommend", nargs="?", const="", dest="recommend_query",
                         help="Recommend a book; optionally provide a query to search similar books")
